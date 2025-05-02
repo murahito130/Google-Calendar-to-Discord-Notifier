@@ -8,13 +8,14 @@ const HOLIDAY_CALENDAR_IDS = [
   // 必要に応じて他の休日カレンダーIDを追加できます
 ];
 const MESSAGE_ID_CACHE_KEY = 'discordWebhookMessageId'; // メッセージIDをキャッシュに保存するキー
-const NUM_OF_MONTHS = 3; // 処理対象の月数（当月、翌月、翌々月）
+const NUM_OF_MONTHS = 6; // 処理対象の月数（当月、翌月、翌々月）
 const WEEK_DAYS = ['(日)', '(月)', '(火)', '(水)', '(木)', '(金)', '(土)'];
 const DAYTIME_START_HOUR = 12;
 const DAYTIME_END_HOUR = 18;
 const NIGHTTIME_START_HOUR = 20;
 const NIGHTTIME_END_HOUR = 25; // 翌日1時
 const MIN_GAP_HOURS = 3;
+const PROCESSING_INTERVAL_MINUTES = 30; // イベント判定の処理単位（分）
 
 // 出勤等予定設定（休日・祝日ではない日に予定がある時間帯）
 const WORK_SCHEDULES = [
@@ -178,8 +179,9 @@ class CalendarHelper {
   }
 }
 
+
 class EventStatusAnalyzer {
-  constructor(daytimeStartHour, daytimeEndHour, nighttimeStartHour, nighttimeEndHour, minGapHours, weekDays, workSchedules) {
+  constructor(daytimeStartHour, daytimeEndHour, nighttimeStartHour, nighttimeEndHour, minGapHours, weekDays, workSchedules, processingIntervalMinutes = 60) {
     this.daytimeStartHour = daytimeStartHour;
     this.daytimeEndHour = daytimeEndHour;
     this.nighttimeStartHour = nighttimeStartHour;
@@ -187,6 +189,7 @@ class EventStatusAnalyzer {
     this.minGapHours = minGapHours;
     this.weekDays = weekDays;
     this.workSchedules = workSchedules; // 出勤等予定の設定を追加
+    this.processingIntervalMinutes = processingIntervalMinutes; // イベント判定の処理単位（分）
   }
 
   getDayStatuses(allEvents, date, holidays) {
@@ -205,29 +208,16 @@ class EventStatusAnalyzer {
     const nighttimeStartHour = this.nighttimeStartHour;
     const nighttimeEndHour = this.nighttimeEndHour;
 
-    const daytimeStart = new Date(year, month, dayOfMonth, daytimeStartHour, 0, 0, 0).getTime();
-    const daytimeEnd = new Date(year, month, dayOfMonth, daytimeEndHour, 0, 0, 0).getTime();
-    const nighttimeStart = new Date(year, month, dayOfMonth, nighttimeStartHour, 0, 0, 0).getTime();
-    let nighttimeEnd;
-    if (nighttimeEndHour > 23) {
-      // 翌日の時間
-      const nextDay = new Date(year, month, dayOfMonth + 1, nighttimeEndHour % 24, 0, 0, 0);
-      nighttimeEnd = nextDay.getTime();
-    } else {
-      nighttimeEnd = new Date(year, month, dayOfMonth, nighttimeEndHour, 0, 0, 0).getTime();
-    }
+    const targetDateMidnight = new Date(year, month, dayOfMonth).getTime();
 
     // その日の終日イベントを取得
     const allDayEventsOnDate = allEvents.filter(event => {
       if (!event.isAllDayEvent()) {
         return false; // 終日イベントでない場合は除外
       }
-      const eventStartDate = new Date(event.getStartTime().getFullYear(), event.getStartTime().getMonth(), event.getStartTime().getDate());
-      const eventEndDate = new Date(event.getEndTime().getFullYear(), event.getEndTime().getMonth(), event.getEndTime().getDate());
-      const targetDate = new Date(year, month, dayOfMonth);
-
-      // イベントの開始日または終了日が対象日と一致するか、対象日を完全に包含する終日イベント
-      return eventStartDate.getTime() <= targetDate.getTime() && eventEndDate.getTime() > targetDate.getTime();
+      const eventStartDate = new Date(event.getStartTime().getFullYear(), event.getStartTime().getMonth(), event.getStartTime().getDate()).getTime();
+      const eventEndDate = new Date(event.getEndTime().getFullYear(), event.getEndTime().getMonth(), event.getEndTime().getDate()).getTime();
+      return eventEndDate > targetDateMidnight && eventStartDate <= targetDateMidnight;
     });
 
     let daytimeStatus = '◯'; // 昼間の初期ステータスは空き
@@ -238,32 +228,8 @@ class EventStatusAnalyzer {
       daytimeStatus = '△';
       nighttimeStatus = '△';
     } else {
-      // 昼間のイベント（設定時間内）をフィルタリング
-      const daytimeEvents = allEvents.filter(event => {
-        const startTime = event.getStartTime().getTime();
-        const endTime = event.getEndTime().getTime();
-        const eventDate = new Date(event.getStartTime().getFullYear(), event.getStartTime().getMonth(), event.getStartTime().getDate());
-        const targetDate = new Date(year, month, dayOfMonth);
-        return !event.isAllDayEvent() && eventDate.getTime() === targetDate.getTime() && (startTime < daytimeEnd && endTime > daytimeStart); // 当日の昼間の時間帯に一部でもかかるイベント
-      });
-
-      // 夜間のイベント（設定時間内）をフィルタリング
-      const nighttimeEvents = allEvents.filter(event => {
-        const startTime = event.getStartTime().getTime();
-        const endTime = event.getEndTime().getTime();
-        const eventStartDate = new Date(event.getStartTime().getFullYear(), event.getStartTime().getMonth(), event.getStartTime().getDate());
-        const eventEndDate = new Date(event.getEndTime().getFullYear(), event.getEndTime().getMonth(), event.getEndTime().getDate());
-        const targetDate = new Date(year, month, dayOfMonth);
-        const nextDayOfTarget = new Date(year, month, dayOfMonth + 1);
-
-        // イベントが当日の夜間にかかるか、夜間を跨いで翌日にかかるイベント
-        const startsInNight = eventStartDate.getTime() === targetDate.getTime() && startTime < nighttimeEnd && endTime > nighttimeStart;
-        const endsInNight = eventEndDate.getTime() === targetDate.getTime() && startTime < nighttimeStart && endTime > nighttimeStart;
-        const spansNight = eventStartDate.getTime() === targetDate.getTime() && startTime < nighttimeStart && endTime > nighttimeEnd;
-        const startsBeforeNightEndsAfterMidnight = eventStartDate.getTime() === targetDate.getTime() && startTime < nighttimeStart && eventEndDate.getTime() === nextDayOfTarget.getTime() && endTime > 0;
-
-        return !event.isAllDayEvent() && (startsInNight || endsInNight || spansNight || startsBeforeNightEndsAfterMidnight);
-      });
+      daytimeStatus = this.checkTimeRangeHasEvent(allEvents, date, daytimeStartHour, daytimeEndHour);
+      nighttimeStatus = this.checkTimeRangeHasEvent(allEvents, date, nighttimeStartHour, nighttimeEndHour);
 
       // 昼間の出勤等予定を確認
       let isWorkScheduleInDaytime = false;
@@ -280,65 +246,101 @@ class EventStatusAnalyzer {
         });
       }
 
-      if (isHoliday) { // 祝日の場合
-        daytimeStatus = daytimeEvents.length > 0 ? '✕' : '◯';
-      } else { // 平日の場合（土日祝以外）
-        daytimeStatus = isWorkScheduleInDaytime ? '✕' : (daytimeEvents.length > 0 ? (this.checkLongGapsForDate(daytimeEvents, date, daytimeStartHour, daytimeEndHour, this.minGapHours) ? '△' : '✕') : '◯');
+      if (!isHoliday && isWorkScheduleInDaytime) {
+        daytimeStatus = '✕';
+      } else if (daytimeStatus === '✕' && this.checkLongGapsForDate(this.getEventsInTimeRange(allEvents, date, daytimeStartHour, daytimeEndHour), date, daytimeStartHour, daytimeEndHour, this.minGapHours)) {
+        daytimeStatus = '△';
       }
 
-      nighttimeStatus = nighttimeEvents.length > 0 ? (this.checkLongGapsForDate(nighttimeEvents, date, nighttimeStartHour, nighttimeEndHour, this.minGapHours) ? '△' : '✕') : '◯';
+      if (nighttimeStatus === '✕' && this.checkLongGapsForDate(this.getEventsInTimeRange(allEvents, date, nighttimeStartHour, nighttimeEndHour), date, nighttimeStartHour, nighttimeEndHour, this.minGapHours)) {
+        nighttimeStatus = '△';
+      }
     }
 
     return [daytimeStatus, nighttimeStatus]; // 昼と夜のステータスを配列で返す
   }
 
-  checkLongGapsForDate(events, targetDate, startHour, endHour, minGapHours) {
-    // 指定された日付・時間帯のイベントのみをフィルタリング
-    const filteredEvents = events.filter(event => {
-      const eventDate = event.getStartTime();
-      const eventEndDate = event.getEndTime();
-      const targetStartTime = new Date(targetDate);
-      targetStartTime.setHours(startHour, 0, 0, 0);
-      const targetEndTime = new Date(targetDate);
-      targetEndTime.setHours(endHour, 0, 0, 0);
-      const eventStartOnDate = eventDate.getFullYear() === targetDate.getFullYear() && eventDate.getMonth() === targetDate.getMonth() && eventDate.getDate() === targetDate.getDate();
-      const eventEndOnDate = eventEndDate.getFullYear() === targetDate.getFullYear() && eventEndDate.getMonth() === targetDate.getMonth() && eventEndDate.getDate() === targetDate.getDate();
-      const eventStartInTarget = eventStartOnDate && eventDate.getTime() >= targetStartTime.getTime() && eventDate.getTime() < targetEndTime.getTime();
-      const eventEndInTarget = eventEndOnDate && eventEndDate.getTime() > targetStartTime.getTime() && eventEndDate.getTime() <= targetEndTime.getTime();
-      const eventOverlapsTarget = eventDate.getTime() < targetStartTime.getTime() && eventEndDate.getTime() > targetEndTime.getTime();
-      return eventStartInTarget || eventEndInTarget || eventOverlapsTarget;
-    });
-
-    if (filteredEvents.length === 0) {
-      return true; // イベントがなければ長時間空きがあるとみなす
+  getEventsInTimeRange(allEvents, date, startHour, endHour) {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const dayOfMonth = date.getDate();
+    const startTime = new Date(year, month, dayOfMonth, startHour, 0, 0, 0).getTime();
+    let endTime;
+    if (endHour > 23) {
+      const nextDay = new Date(year, month, dayOfMonth + 1, endHour % 24, 0, 0, 0);
+      endTime = nextDay.getTime();
+    } else {
+      endTime = new Date(year, month, dayOfMonth, endHour, 0, 0, 0).getTime();
     }
 
-    // イベントをstartTimeで昇順にソート
-    filteredEvents.sort((a, b) => a.getStartTime().getTime() - b.getStartTime().getTime());
+    return allEvents.filter(event => {
+      const eventStartTime = event.getStartTime().getTime();
+      const eventEndTime = event.getEndTime().getTime();
+      return !event.isAllDayEvent() && eventStartTime < endTime && eventEndTime > startTime;
+    });
+  }
+
+  checkTimeRangeHasEvent(allEvents, date, startHour, endHour) {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const dayOfMonth = date.getDate();
+    const intervalMinutes = this.processingIntervalMinutes;
+    const startTime = new Date(year, month, dayOfMonth, startHour, 0, 0, 0).getTime();
+    let endTime;
+    if (endHour > 23) {
+      const nextDay = new Date(year, month, dayOfMonth + 1, endHour % 24, 0, 0, 0);
+      endTime = nextDay.getTime();
+    } else {
+      endTime = new Date(year, month, dayOfMonth, endHour, 0, 0, 0).getTime();
+    }
+
+    for (let currentTime = startTime; currentTime < endTime; currentTime += intervalMinutes * 60 * 1000) {
+      const intervalEnd = currentTime + intervalMinutes * 60 * 1000;
+      const hasEventInInterval = allEvents.some(event => {
+        if (event.isAllDayEvent()) return false;
+        const eventStartTime = event.getStartTime().getTime();
+        const eventEndTime = event.getEndTime().getTime();
+        return eventStartTime < intervalEnd && eventEndTime > currentTime;
+      });
+      if (hasEventInInterval) {
+        return '✕';
+      }
+    }
+    return '◯';
+  }
+
+  checkLongGapsForDate(events, targetDate, startHour, endHour, minGapHours) {
+    if (events.length === 0) {
+      return true;
+    }
+
+    events.sort((a, b) => a.getStartTime().getTime() - b.getStartTime().getTime());
 
     const periodStart = new Date(targetDate);
-    periodStart.setHours(startHour, 0, 0, 0); // 確認期間の開始時刻
+    periodStart.setHours(startHour, 0, 0, 0);
     const periodEnd = new Date(targetDate);
-    periodEnd.setHours(endHour, 0, 0, 0); // 確認期間の終了
-    let currentPeriodStart = periodStart.getTime(); // 現在の空き時間開始時刻
+    periodEnd.setHours(endHour > 23 ? endHour % 24 : endHour, 0, 0, 0);
+    if (endHour > 23) {
+      periodEnd.setDate(periodEnd.getDate() + 1);
+    }
+    let currentPeriodStart = periodStart.getTime();
 
-    for (let i = 0; i < filteredEvents.length; i++) {
-      const eventStart = filteredEvents[i].getStartTime().getTime();
-      const gap = (eventStart - currentPeriodStart) / (1000 * 60 * 60); // 空き時間を時間単位で計算
+    for (let i = 0; i < events.length; i++) {
+const eventStart = events[i].getStartTime().getTime();
+      const gap = (eventStart - currentPeriodStart) / (1000 * 60 * 60);
       if (gap >= minGapHours) {
-        return true; // 指定以上の空き時間があれば true を返す
+        return true;
       }
-      currentPeriodStart = Math.max(currentPeriodStart, filteredEvents[i].getEndTime().getTime()); // 次の空き時間の開始時刻をイベント終了時刻に更新
+      currentPeriodStart = Math.max(currentPeriodStart, events[i].getEndTime().getTime());
     }
 
-    // 最後のイベント終了時刻から期間終了時刻までの空き時間を確認
-    const lastEventEnd = filteredEvents.length > 0 ? filteredEvents[filteredEvents.length - 1].getEndTime().getTime() : periodStart.getTime();
+    const lastEventEnd = events.length > 0 ? events[events.length - 1].getEndTime().getTime() : periodStart.getTime();
     const lastGap = (periodEnd.getTime() - lastEventEnd) / (1000 * 60 * 60);
     if (lastGap >= minGapHours) {
-      return true; // 期間終了までに指定以上の空き時間があれば true を返す
+      return true;
     }
 
-    return false; // 指定以上の空き時間がなければ false を返す
+    return false;
   }
 }
 
@@ -355,7 +357,9 @@ function sendCalendarEventsToDiscord() {
     NIGHTTIME_END_HOUR,
     MIN_GAP_HOURS,
     WEEK_DAYS,
-    WORK_SCHEDULES);
+    WORK_SCHEDULES,
+    PROCESSING_INTERVAL_MINUTES // 処理単位をコンストラクタに渡す
+  );
 
   // 現在の日付情報を取得
   const now = new Date();
@@ -385,7 +389,7 @@ function sendCalendarEventsToDiscord() {
     const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
     let monthText = '```\n';
 
-    monthText += '   　 　昼 夜\n';
+    monthText += ' 　 　 　昼 夜\n';
 
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(targetYear, targetMonth, day);
