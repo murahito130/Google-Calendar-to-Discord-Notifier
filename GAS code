@@ -16,6 +16,15 @@ const NIGHTTIME_START_HOUR = 20;
 const NIGHTTIME_END_HOUR = 25; // 翌日1時
 const MIN_GAP_HOURS = 3;
 
+// 休日設定（True: 休み, False: 出勤等）
+const IS_SUNDAY_HOLIDAY = true;
+const IS_MONDAY_HOLIDAY = false;
+const IS_TUESDAY_HOLIDAY = false;
+const IS_WEDNESDAY_HOLIDAY = false;
+const IS_THURSDAY_HOLIDAY = false;
+const IS_FRIDAY_HOLIDAY = false;
+const IS_SATURDAY_HOLIDAY = true;
+
 class DiscordNotifier {
   constructor(webhookUrl) {
     this.webhookUrl = webhookUrl;
@@ -149,13 +158,14 @@ class CalendarHelper {
 }
 
 class EventStatusAnalyzer {
-  constructor(daytimeStartHour, daytimeEndHour, nighttimeStartHour, nighttimeEndHour, minGapHours, weekDays) {
+  constructor(daytimeStartHour, daytimeEndHour, nighttimeStartHour, nighttimeEndHour, minGapHours, weekDays, holidaySettings) {
     this.daytimeStartHour = daytimeStartHour;
     this.daytimeEndHour = daytimeEndHour;
     this.nighttimeStartHour = nighttimeStartHour;
     this.nighttimeEndHour = nighttimeEndHour;
     this.minGapHours = minGapHours;
     this.weekDays = weekDays;
+    this.holidaySettings = holidaySettings;
   }
 
   getDayStatuses(allEvents, date, holidays) {
@@ -168,6 +178,32 @@ class EventStatusAnalyzer {
       holiday.getMonth() === month &&
       holiday.getDate() === dayOfMonth
     );
+
+    // 曜日が休みとして設定されているか確認
+    let isWeekdayHoliday = false;
+    switch (dayOfWeek) {
+      case 0: // 日曜日
+        isWeekdayHoliday = this.holidaySettings.isSundayHoliday;
+        break;
+      case 1: // 月曜日
+        isWeekdayHoliday = this.holidaySettings.isMondayHoliday;
+        break;
+      case 2: // 火曜日
+        isWeekdayHoliday = this.holidaySettings.isTuesdayHoliday;
+        break;
+      case 3: // 水曜日
+        isWeekdayHoliday = this.holidaySettings.isWednesdayHoliday;
+        break;
+      case 4: // 木曜日
+        isWeekdayHoliday = this.holidaySettings.isThursdayHoliday;
+        break;
+      case 5: // 金曜日
+        isWeekdayHoliday = this.holidaySettings.isFridayHoliday;
+        break;
+      case 6: // 土曜日
+        isWeekdayHoliday = this.holidaySettings.isSaturdayHoliday;
+        break;
+    }
 
     const daytimeStart = new Date(year, month, dayOfMonth, this.daytimeStartHour, 0, 0, 0).getTime();
     const daytimeEnd = new Date(year, month, dayOfMonth, this.daytimeEndHour, 0, 0, 0).getTime();
@@ -211,15 +247,19 @@ class EventStatusAnalyzer {
         );
       });
 
-      if (isHoliday || (dayOfWeek >= 1 && dayOfWeek <= 5)) { // 平日の場合（土日祝以外）
+      if (isHoliday || isWeekdayHoliday) { // 祝日または設定された休日の場合
+        if (daytimeEvents.length > 0) { // 昼間にイベントがある場合
+          daytimeStatus = '✕'; // 予定あり
+        } else {
+          daytimeStatus = '◯'; // 空き
+        }
+      } else { // 平日の場合（土日祝以外）
         if (daytimeEvents.length > 0) { // 昼間にイベントがある場合
           const hasLongGaps = this.checkLongGapsForDate(daytimeEvents, date, this.daytimeStartHour, this.daytimeEndHour, this.minGapHours); // 3時間以上の空き時間があるか確認
           daytimeStatus = hasLongGaps ? '△' : '✕'; // 長時間空きがあれば要相談、なければ予定あり
-        } else if (!isHoliday) { // 平日で昼間にイベントがない場合
+        } else { // 平日で昼間にイベントがない場合
           daytimeStatus = '✕'; // デフォルトで予定あり（基本的に誰かがいる想定）
         }
-      } else if (daytimeEvents.length > 0) { // 土日祝で昼間にイベントがある場合
-        daytimeStatus = '✕'; // 予定あり
       }
 
       nighttimeStatus = nighttimeEvents.length > 0 ? '✕' : '◯'; // 夜間にイベントがあれば予定あり、なければ空き
@@ -283,14 +323,23 @@ function sendCalendarEventsToDiscord() {
     NIGHTTIME_START_HOUR,
     NIGHTTIME_END_HOUR,
     MIN_GAP_HOURS,
-    WEEK_DAYS
+    WEEK_DAYS,
+    {
+      isSundayHoliday: IS_SUNDAY_HOLIDAY,
+      isMondayHoliday: IS_MONDAY_HOLIDAY,
+      isTuesdayHoliday: IS_TUESDAY_HOLIDAY,
+      isWednesdayHoliday: IS_WEDNESDAY_HOLIDAY,
+      isThursdayHoliday: IS_THURSDAY_HOLIDAY,
+      isFridayHoliday: IS_FRIDAY_HOLIDAY,
+      isSaturdayHoliday: IS_SATURDAY_HOLIDAY,
+    }
   );
 
   // 現在の日付情報を取得
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
-  const timestamp = now.toISOString();
+  const timestamp = now.toISOString;
 
   // 処理対象の月の開始日と終了日を計算
   const firstDayOfCurrentMonth = new Date(currentYear, currentMonth, 1);
@@ -314,7 +363,7 @@ function sendCalendarEventsToDiscord() {
     const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
     let monthText = '```\n';
 
-    monthText += '   　 　昼 夜\n';
+    monthText += '     　昼 夜\n';
 
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(targetYear, targetMonth, day);
