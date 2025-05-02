@@ -1,7 +1,7 @@
 # はじめに
 
 GAS（Google Apps Script）を使用して公開されている Google カレンダーのカレンダーIDと Discord の Webhook URL を指定することで、以下のようなメッセージを Discord に送信できます。<br>
-このコードを GAS のトリガーを使用して数時間（4時間以内を推奨）ごとに実行することで、同じメッセージを編集する形で 1 つのメッセージを更新できますので、通知を煩わしく思う方におすすめです。
+このコードを GAS のトリガーを使用して数時間（4時間以内を推奨）ごとに実行することで、同じメッセージを編集する形でメッセージを更新できますので、Discordの新規メッセージの通知を煩わしく思う方におすすめです。
 
 ![メッセージの例](https://github.com/murahito130/google_calendar_freebusy_discord_webhook/blob/main/example.png)
 
