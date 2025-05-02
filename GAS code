@@ -355,7 +355,7 @@ function sendCalendarEventsToDiscord() {
     const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
     let monthText = '```\n';
 
-    monthText += ' 　 　 　昼 夜\n';
+    monthText += '   　 　昼 夜\n';
 
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(targetYear, targetMonth, day);
