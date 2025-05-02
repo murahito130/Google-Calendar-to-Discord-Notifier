@@ -1,0 +1,360 @@
+// 設定
+const CALENDAR_IDS = [
+  'ここに公開済みのカレンダーのIDを入れてね',
+]; // 監視対象とするGoogleカレンダーのIDを配列で指定します。
+const DISCORD_WEBHOOK_URL = 'ここにWebHookのURLを入れてね';
+const HOLIDAY_CALENDAR_IDS = [
+  'ja.japanese#holiday@group.v.calendar.google.com' // 日本の祝日カレンダーのID
+  // 必要に応じて他の祝日カレンダーIDを追加できます
+];
+const MESSAGE_ID_CACHE_KEY = 'discordWebhookMessageId'; // メッセージIDをキャッシュに保存するキー
+const NUM_OF_MONTHS = 3; // 処理対象の月数（当月、翌月、翌々月）
+const WEEK_DAYS = ['(日)', '(月)', '(火)', '(水)', '(木)', '(金)', '(土)'];
+const DAYTIME_START_HOUR = 12;
+const DAYTIME_END_HOUR = 18;
+const NIGHTTIME_START_HOUR = 20;
+const NIGHTTIME_END_HOUR = 25; // 翌日1時
+const MIN_GAP_HOURS = 3;
+
+class DiscordNotifier {
+  constructor(webhookUrl) {
+    this.webhookUrl = webhookUrl;
+  }
+
+  postMessage(message = '', embeds = []) {
+    const urlWithWait = this.webhookUrl + '?wait=true'; // ?wait=true を追加
+    const payload = JSON.stringify({
+      content: message,
+      embeds: embeds,
+      flags: 4096 // @silent
+    });
+
+    const options = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      payload: payload
+    };
+
+    try {
+      const response = UrlFetchApp.fetch(urlWithWait, options);
+      const responseJson = JSON.parse(response.getContentText());
+      const messageId = responseJson.id;
+      Logger.log(`Discordにメッセージを送信しました。メッセージID: ${messageId}`);
+      return messageId;
+    } catch (error) {
+      Logger.log(`Discordへの送信に失敗しました: ${error}`);
+      return null;
+    }
+  }
+
+  editMessage(messageId, embeds) {
+    const cache = CacheService.getScriptCache();
+
+    // messageId が null の場合は編集処理をスキップして新規投稿
+    if (messageId === null) {
+      Logger.log('編集対象のメッセージIDがnullのため、新規投稿します。');
+      const newMessageId = this.postMessage('', embeds);
+      if (newMessageId) {
+        cache.put(MESSAGE_ID_CACHE_KEY, newMessageId, 60 * 60 * 6); // IDを保存
+        Logger.log(`新しいメッセージを送信しました。メッセージID: ${newMessageId}`);
+        return newMessageId;
+      } else {
+        Logger.log('新しいメッセージの送信に失敗しました。');
+        return null;
+      }
+    }
+
+    const editUrl = `${this.webhookUrl}/messages/${messageId}`;
+    const options = {
+      'method': 'patch',
+      'contentType': 'application/json',
+      'payload': JSON.stringify({ embeds: embeds })
+    };
+    try {
+      const editResponse = UrlFetchApp.fetch(editUrl, options);
+      const responseCode = editResponse.getResponseCode();
+      if (responseCode === 200) {
+        const responseJson = JSON.parse(editResponse.getContentText());
+        const newMessageId = responseJson.id;
+        cache.put(MESSAGE_ID_CACHE_KEY, newMessageId, 60 * 60 * 6); // IDを更新
+        Logger.log(`メッセージ (ID: ${messageId}) を編集しました。新しいメッセージID: ${newMessageId}`);
+        return newMessageId;
+      } else if (responseCode === 404) {
+        Logger.log(`編集対象のメッセージ (ID: ${messageId}) は存在しませんでした。新規投稿します。`);
+        const newMessageId = this.postMessage('', embeds);
+        if (newMessageId) {
+          cache.put(MESSAGE_ID_CACHE_KEY, newMessageId, 60 * 60 * 6); // IDを保存
+          Logger.log(`新しいメッセージを送信しました。メッセージID: ${newMessageId}`);
+          return newMessageId;
+        } else {
+          Logger.log('新しいメッセージの送信に失敗しました。');
+          return null;
+        }
+      } else {
+        Logger.log(`メッセージ (ID: ${messageId}) の編集に失敗しました。ステータスコード: ${responseCode}`);
+        return null;
+      }
+    } catch (error) {
+      Logger.log(`メッセージ (ID: ${messageId}) の編集中にエラーが発生しました: ${error}`);
+      const newMessageId = this.postMessage('', embeds);
+      if (newMessageId) {
+        cache.put(MESSAGE_ID_CACHE_KEY, newMessageId, 60 * 60 * 6); // IDを保存
+        Logger.log(`新しいメッセージを送信しました。メッセージID: ${newMessageId}`);
+        return newMessageId;
+      } else {
+        Logger.log('新しいメッセージの送信に失敗しました。');
+        return null;
+      }
+    }
+  }
+}
+
+class CalendarHelper {
+  constructor(calendarIds, holidayCalendarIds) {
+    this.calendarIds = calendarIds;
+    this.holidayCalendarIds = holidayCalendarIds;
+  }
+
+  getEventsForRange(startTime, endTime) {
+    let publicBusyEvents = [];
+    this.calendarIds.forEach(calendarId => {
+      const calendar = CalendarApp.getCalendarById(calendarId);
+      if (calendar) {
+        const events = calendar.getEvents(startTime, endTime);
+        events.forEach(event => {
+          publicBusyEvents.push(event);
+        });
+      } else {
+        Logger.log(`カレンダーID '${calendarId}' は見つかりませんでした。`);
+      }
+    });
+    return publicBusyEvents; // 公開設定が「予定あり」のイベントのみを返す
+  }
+
+  getHolidayDates(startDate, endDate) {
+    let allHolidays = [];
+    this.holidayCalendarIds.forEach(holidayCalendarId => {
+      const calendar = CalendarApp.getCalendarById(holidayCalendarId);
+      if (calendar) {
+        const events = calendar.getEvents(startDate, endDate);
+        allHolidays = allHolidays.concat(events.map(event => event.getStartTime()));
+      } else {
+        Logger.log(`祝日カレンダーID '${holidayCalendarId}' は見つかりませんでした。`);
+      }
+    });
+    return allHolidays;
+  }
+}
+
+class EventStatusAnalyzer {
+  constructor(daytimeStartHour, daytimeEndHour, nighttimeStartHour, nighttimeEndHour, minGapHours, weekDays) {
+    this.daytimeStartHour = daytimeStartHour;
+    this.daytimeEndHour = daytimeEndHour;
+    this.nighttimeStartHour = nighttimeStartHour;
+    this.nighttimeEndHour = nighttimeEndHour;
+    this.minGapHours = minGapHours;
+    this.weekDays = weekDays;
+  }
+
+  getDayStatuses(allEvents, date, holidays) {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const dayOfMonth = date.getDate();
+    const dayOfWeek = date.getDay(); // 0:日, 1:月, ..., 6:土
+    const isHoliday = holidays.some(holiday => // その日が祝日かどうかを判定
+      holiday.getFullYear() === year &&
+      holiday.getMonth() === month &&
+      holiday.getDate() === dayOfMonth
+    );
+
+    const daytimeStart = new Date(year, month, dayOfMonth, this.daytimeStartHour, 0, 0, 0).getTime();
+    const daytimeEnd = new Date(year, month, dayOfMonth, this.daytimeEndHour, 0, 0, 0).getTime();
+    const nighttimeStart = new Date(year, month, dayOfMonth, this.nighttimeStartHour, 0, 0, 0).getTime();
+    const nighttimeEnd = new Date(year, month, dayOfMonth, this.nighttimeEndHour, 0, 0, 0).getTime(); // 翌日1時
+
+    // その日の終日イベントを取得
+    const allDayEventsOnDate = allEvents.filter(event => {
+      const eventDate = new Date(event.getStartTime().getFullYear(), event.getStartTime().getMonth(), event.getStartTime().getDate());
+      const targetDate = new Date(year, month, dayOfMonth);
+      return event.isAllDayEvent() && eventDate.getTime() === targetDate.getTime();
+    });
+
+    let daytimeStatus = '◯'; // 昼間の初期ステータスは空き
+    let nighttimeStatus = '◯'; // 夜間の初期ステータスは空き
+
+    if (allDayEventsOnDate.length > 0) {
+      // 終日の予定がある場合は昼と夜を△に設定し、他の処理をスキップ
+      daytimeStatus = '△';
+      nighttimeStatus = '△';
+    } else {
+      // 昼間のイベント（設定時間内）をフィルタリング
+      const daytimeEvents = allEvents.filter(event => {
+        const startTime = event.getStartTime().getTime();
+        const endTime = event.getEndTime().getTime();
+        return (
+          (startTime >= daytimeStart && startTime < daytimeEnd) || // 開始が昼間
+          (endTime > daytimeStart && endTime <= daytimeEnd) ||   // 終了が昼間
+          (startTime < daytimeStart && endTime > daytimeEnd)     // 昼間を跨ぐ
+        );
+      });
+
+      // 夜間のイベント（設定時間内）をフィルタリング
+      const nighttimeEvents = allEvents.filter(event => {
+        const startTime = event.getStartTime().getTime();
+        const endTime = event.getEndTime().getTime();
+        return (
+          (startTime >= nighttimeStart && startTime < nighttimeEnd) || // 開始が夜間
+          (endTime > nighttimeStart && endTime <= nighttimeEnd) ||   // 終了が夜間
+          (startTime < nighttimeStart && endTime > nighttimeEnd)     // 夜間を跨ぐ
+        );
+      });
+
+      if (isHoliday || (dayOfWeek >= 1 && dayOfWeek <= 5)) { // 平日の場合（土日祝以外）
+        if (daytimeEvents.length > 0) { // 昼間にイベントがある場合
+          const hasLongGaps = this.checkLongGapsForDate(daytimeEvents, date, this.daytimeStartHour, this.daytimeEndHour, this.minGapHours); // 3時間以上の空き時間があるか確認
+          daytimeStatus = hasLongGaps ? '△' : '✕'; // 長時間空きがあれば要相談、なければ予定あり
+        } else if (!isHoliday) { // 平日で昼間にイベントがない場合
+          daytimeStatus = '✕'; // デフォルトで予定あり（基本的に誰かがいる想定）
+        }
+      } else if (daytimeEvents.length > 0) { // 土日祝で昼間にイベントがある場合
+        daytimeStatus = '✕'; // 予定あり
+      }
+
+      nighttimeStatus = nighttimeEvents.length > 0 ? '✕' : '◯'; // 夜間にイベントがあれば予定あり、なければ空き
+    }
+
+    return [daytimeStatus, nighttimeStatus]; // 昼と夜のステータスを配列で返す
+  }
+
+  checkLongGapsForDate(events, targetDate, startHour, endHour, minGapHours) {
+    // 指定された日付・時間帯のイベントのみをフィルタリング
+    const filteredEvents = events.filter(event => {
+      const eventDate = event.getStartTime();
+      return eventDate.getFullYear() === targetDate.getFullYear() &&
+             eventDate.getMonth() === targetDate.getMonth() &&
+             eventDate.getDate() === targetDate.getDate() &&
+             eventDate.getHours() >= startHour && eventDate.getHours() < endHour;
+    });
+
+    if (filteredEvents.length === 0) {
+      return true; // イベントがなければ長時間空きがあるとみなす
+    }
+
+    // イベントをstartTimeで昇順にソート
+    filteredEvents.sort((a, b) => a.getStartTime().getTime() - b.getStartTime().getTime());
+
+    const periodStart = new Date(targetDate);
+    periodStart.setHours(startHour, 0, 0, 0); // 確認期間の開始時刻
+    const periodEnd = new Date(targetDate);
+    periodEnd.setHours(endHour, 0, 0, 0); // 確認期間の終了時刻
+    let currentPeriodStart = periodStart.getTime(); // 現在の空き時間開始時刻
+
+    for (let i = 0; i < filteredEvents.length; i++) {
+      const eventStart = filteredEvents[i].getStartTime().getTime();
+      const gap = (eventStart - currentPeriodStart) / (1000 * 60 * 60); // 空き時間を時間単位で計算
+      if (gap >= minGapHours) {
+        return true; // 指定以上の空き時間があれば true を返す
+      }
+      currentPeriodStart = filteredEvents[i].getEndTime().getTime(); // 次の空き時間の開始時刻をイベント終了時刻に更新
+    }
+
+    // 最後のイベント終了時刻から期間終了時刻までの空き時間を確認
+    const lastEventEnd = filteredEvents[filteredEvents.length - 1].getEndTime().getTime();
+    const lastGap = (periodEnd.getTime() - lastEventEnd) / (1000 * 60 * 60);
+    if (lastGap >= minGapHours) {
+      return true; // 期間終了までに指定以上の空き時間があれば true を返す
+    }
+
+    return false; // 指定以上の空き時間がなければ false を返す
+  }
+}
+
+/**
+ * Googleカレンダーのイベント情報を取得し、指定されたDiscordのWebhook URLへ送信します。
+ */
+function sendCalendarEventsToDiscord() {
+  const discordNotifier = new DiscordNotifier(DISCORD_WEBHOOK_URL);
+  const calendarHelper = new CalendarHelper(CALENDAR_IDS, HOLIDAY_CALENDAR_IDS);
+  const eventStatusAnalyzer = new EventStatusAnalyzer(
+    DAYTIME_START_HOUR,
+    DAYTIME_END_HOUR,
+    NIGHTTIME_START_HOUR,
+    NIGHTTIME_END_HOUR,
+    MIN_GAP_HOURS,
+    WEEK_DAYS
+  );
+
+  // 現在の日付情報を取得
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const timestamp = now.toISOString();
+
+  // 処理対象の月の開始日と終了日を計算
+  const firstDayOfCurrentMonth = new Date(currentYear, currentMonth, 1);
+  const lastDayOfTargetMonth = new Date(currentYear, currentMonth + NUM_OF_MONTHS, 0);
+
+  // 祝日の日付をまとめて取得
+  const allHolidaysInRange = calendarHelper.getHolidayDates(firstDayOfCurrentMonth, lastDayOfTargetMonth);
+
+  const monthInfos = [];
+
+  for (let i = 0; i < NUM_OF_MONTHS; i++) {
+    const targetMonth = (currentMonth + i) % 12;
+    let targetYear = currentYear;
+    if (currentMonth + i >= 12) {
+      targetYear++;
+    }
+
+    const startDate = new Date(targetYear, targetMonth, 1, DAYTIME_START_HOUR, 0, 0, 0);
+    const endDate = new Date(targetYear, targetMonth + 1, 0, NIGHTTIME_END_HOUR, 0, 0, 0);
+    const events = calendarHelper.getEventsForRange(startDate, endDate);
+    const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+    let monthText = '```\n';
+
+    monthText += '   　 　昼 夜\n';
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(targetYear, targetMonth, day);
+      const dayOfWeek = WEEK_DAYS[date.getDay()];
+      // 当該日の祝日のみをフィルタリング
+      const holidaysOnDate = allHolidaysInRange.filter(holiday =>
+        holiday.getFullYear() === targetYear &&
+        holiday.getMonth() === targetMonth && holiday.getDate() === day
+      );
+      const [daytimeStatus, nighttimeStatus] = eventStatusAnalyzer.getDayStatuses(events, date, holidaysOnDate);
+      const dayStr = Utilities.formatString('%2d', day);
+      monthText += `${dayStr}${dayOfWeek}：${daytimeStatus} ${nighttimeStatus}\n`;
+    }
+    monthText += '```';
+
+    monthInfos.push({
+      name: `${targetMonth + 1}月`,
+      value: daysInMonth > 0 ? monthText : '情報なし',
+      inline: true
+    });
+  }
+
+  let embeds = [];
+  embeds.push({
+    description: '-# ◯：空き、△：要相談、✕：予定あり',
+    fields: monthInfos,
+    timestamp: timestamp
+  });
+
+  // CacheService の初期化
+  const cache = CacheService.getScriptCache();
+  const prevMessageId = cache.get(MESSAGE_ID_CACHE_KEY);
+
+  // Discordのメッセージを編集または新規投稿
+  const messageId = discordNotifier.editMessage(prevMessageId, embeds);
+  if (messageId == null) {
+    cache.put(MESSAGE_ID_CACHE_KEY, prevMessageId, 60 * 60 * 6); // IDを保存
+    return;
+  }
+  else {
+    cache.put(MESSAGE_ID_CACHE_KEY, messageId, 60 * 60 * 6); // IDを保存
+  }
+}
