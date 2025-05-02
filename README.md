@@ -12,6 +12,7 @@ GAS（Google Apps Script）を使用して公開されている Google カレン
 - 20時から25時を夜とする
 - 平日の日中（昼）は予定がある
 - 土日祝日は予定が空いている
+
 制作者と生活サイクルが異なる方や、設定の変更を希望される方は、ご自由にカスタマイズしてください。
 
 # Google Calendar to Discord Notifier
