@@ -16,7 +16,7 @@ GAS（Google Apps Script）を使用して公開されている Google カレン
 
 制作者と生活サイクルが異なる方や、設定の変更を希望される方は、ご自由にカスタマイズしてください。
 
-# Google Calendar to Discord Availability Notifier
+# Google Calendar to Discord Notifier
 
 このGoogle Apps Script（GAS）は、指定したGoogleカレンダーのイベント情報を定期的に取得し、その日の昼間と夜間の予定状況をDiscordのWebhook URLへ送信します。祝日や設定された出勤予定も考慮して、空き状況を分かりやすく表示します。
 
