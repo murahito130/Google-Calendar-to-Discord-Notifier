@@ -8,7 +8,7 @@ const HOLIDAY_CALENDAR_IDS = [
   // 必要に応じて他の休日カレンダーIDを追加できます
 ];
 const MESSAGE_ID_CACHE_KEY = 'discordWebhookMessageId'; // メッセージIDをキャッシュに保存するキー
-const NUM_OF_MONTHS = 6; // 処理対象の月数（当月、翌月、翌々月）
+const NUM_OF_MONTHS = 3; // 処理対象の月数（当月、翌月、翌々月）
 const WEEK_DAYS = ['(日)', '(月)', '(火)', '(水)', '(木)', '(金)', '(土)'];
 const DAYTIME_START_HOUR = 12;
 const DAYTIME_END_HOUR = 18;
@@ -223,28 +223,33 @@ class EventStatusAnalyzer {
     let daytimeStatus = '◯'; // 昼間の初期ステータスは空き
     let nighttimeStatus = '◯'; // 夜間の初期ステータスは空き
 
-    if (allDayEventsOnDate.length > 0) {
-      // 終日の予定がある場合は昼と夜を△に設定
-      daytimeStatus = '△';
-      nighttimeStatus = '△';
+    let hasAllDayEvent = allDayEventsOnDate.length > 0;
+
+    // 昼間の出勤等予定を確認
+    let isWorkScheduleInDaytime = false;
+    if (!isHoliday) {
+      this.workSchedules.forEach(schedule => {
+        if (schedule.dayOfWeek === dayOfWeek) {
+          const scheduleStartTime = schedule.startTime;
+          const scheduleEndTime = schedule.endTime;
+          // 昼間の時間帯と重複するか確認
+          if ((scheduleStartTime < daytimeEndHour && scheduleEndTime > daytimeStartHour)) {
+            isWorkScheduleInDaytime = true;
+          }
+        }
+      });
+    }
+
+    if (hasAllDayEvent) {
+      if (!isHoliday && isWorkScheduleInDaytime) {
+        daytimeStatus = '✕'; // 終日イベントかつ出勤予定あり
+      } else {
+        daytimeStatus = '△'; // 終日イベントのみ
+      }
+      nighttimeStatus = '△'; // 夜間は終日イベントがあれば△
     } else {
       daytimeStatus = this.checkTimeRangeHasEvent(allEvents, date, daytimeStartHour, daytimeEndHour);
       nighttimeStatus = this.checkTimeRangeHasEvent(allEvents, date, nighttimeStartHour, nighttimeEndHour);
-
-      // 昼間の出勤等予定を確認
-      let isWorkScheduleInDaytime = false;
-      if (!isHoliday) {
-        this.workSchedules.forEach(schedule => {
-          if (schedule.dayOfWeek === dayOfWeek) {
-            const scheduleStartTime = schedule.startTime;
-            const scheduleEndTime = schedule.endTime;
-            // 昼間の時間帯と重複するか確認
-            if ((scheduleStartTime < daytimeEndHour && scheduleEndTime > daytimeStartHour)) {
-              isWorkScheduleInDaytime = true;
-            }
-          }
-        });
-      }
 
       if (!isHoliday && isWorkScheduleInDaytime) {
         daytimeStatus = '✕';
@@ -326,7 +331,7 @@ class EventStatusAnalyzer {
     let currentPeriodStart = periodStart.getTime();
 
     for (let i = 0; i < events.length; i++) {
-const eventStart = events[i].getStartTime().getTime();
+      const eventStart = events[i].getStartTime().getTime();
       const gap = (eventStart - currentPeriodStart) / (1000 * 60 * 60);
       if (gap >= minGapHours) {
         return true;
