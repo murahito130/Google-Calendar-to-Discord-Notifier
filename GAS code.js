@@ -1,29 +1,22 @@
-// 設定
+// -------------------- ユーザーによる設定が必要な項目 --------------------
 const CALENDAR_IDS = [
   'ここに公開済みのカレンダーのIDを入れてね',
 ]; // 監視対象とするGoogleカレンダーのIDを配列で指定します。
+
 const DISCORD_WEBHOOK_URL = 'ここにWebHookのURLを入れてね';
+
 const HOLIDAY_CALENDAR_IDS = [
   'ja.japanese#holiday@group.v.calendar.google.com' // 日本の祝日カレンダーのID
   // 必要に応じて他の休日カレンダーIDを追加できます
 ];
-const MESSAGE_ID_CACHE_KEY = 'discordWebhookMessageId'; // メッセージIDをキャッシュに保存するキー
-const NUM_OF_MONTHS = 3; // 処理対象の月数（当月、翌月、翌々月）
-const WEEK_DAYS = ['(日)', '(月)', '(火)', '(水)', '(木)', '(金)', '(土)'];
-const DAYTIME_START_HOUR = 12;
-const DAYTIME_END_HOUR = 18;
-const NIGHTTIME_START_HOUR = 20;
-const NIGHTTIME_END_HOUR = 25; // 翌日1時
-const MIN_GAP_HOURS = 3;
-const PROCESSING_INTERVAL_MINUTES = 30; // イベント判定の処理単位（分）
 
 class WorkSchedule {
   constructor(dayOfWeek, startTime, endTime, startDate = null, endDate = null) {
     this.dayOfWeek = dayOfWeek; // 曜日 (0:日, 1:月, ..., 6:土)
     this.startTime = startTime;   // 開始時間 (時)
-    this.endTime = endTime;      // 終了時間 (時)
+    this.endTime = endTime;     // 終了時間 (時)
     this.startDate = startDate ? new Date(startDate) : null; // 開始日 (Date型)
-    this.endDate = endDate ? new Date(endDate) : null;     // 終了日 (Date型)
+    this.endDate = endDate ? new Date(endDate) : null;       // 終了日 (Date型)
   }
 
   isApplicable(date) {
@@ -35,12 +28,26 @@ class WorkSchedule {
 
 // 出勤等予定設定（休日・祝日ではない日に予定がある時間帯）
 const WORK_SCHEDULES = [
-  new WorkSchedule(1, 9, 19), // 毎週月曜日 9時〜19時
-  new WorkSchedule(2, 9, 19), // 毎週火曜日 9時〜19時
-  new WorkSchedule(3, 9, 19), // 毎週水曜日 9時〜19時
-  new WorkSchedule(4, 9, 19), // 毎週木曜日 9時〜19時
-  new WorkSchedule(5, 9, 19), // 毎週金曜日 9時〜19時
+  new WorkSchedule(1, 9, 19), // 例: 毎週月曜日 9時〜19時
+  new WorkSchedule(2, 9, 19), // 例: 毎週火曜日 9時〜19時
+  new WorkSchedule(3, 9, 19), // 例: 毎週水曜日 9時〜19時
+  new WorkSchedule(4, 9, 19), // 例: 毎週木曜日 9時〜19時
+  new WorkSchedule(5, 9, 19), // 例: 毎週金曜日 9時〜19時
+  // 必要に応じて勤務スケジュールを追加・変更・削除できます
+  // 例: 特定期間のみの勤務 new WorkSchedule(0, 10, 17, '2025-05-10', '2025-05-15'), // 5月10日〜15日の日曜日 10時〜17時
 ];
+
+// -------------------- 通常は変更不要な項目 --------------------
+const MESSAGE_ID_CACHE_KEY = 'discordWebhookMessageId'; // メッセージIDをキャッシュに保存するキー
+const NUM_OF_MONTHS = 3; // 処理対象の月数（当月、翌月、翌々月）
+const WEEK_DAYS = ['(日)', '(月)', '(火)', '(水)', '(木)', '(金)', '(土)'];
+const DAYTIME_START_HOUR = 12;
+const DAYTIME_END_HOUR = 18;
+const NIGHTTIME_START_HOUR = 20;
+const NIGHTTIME_END_HOUR = 25; // 翌日1時
+const MIN_GAP_HOURS = 3;
+const PROCESSING_INTERVAL_MINUTES = 30; // イベント判定の処理単位（分）
+
 
 class DiscordNotifier {
   constructor(webhookUrl) {
