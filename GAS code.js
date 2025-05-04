@@ -17,34 +17,29 @@ const NIGHTTIME_END_HOUR = 25; // 翌日1時
 const MIN_GAP_HOURS = 3;
 const PROCESSING_INTERVAL_MINUTES = 30; // イベント判定の処理単位（分）
 
+class WorkSchedule {
+  constructor(dayOfWeek, startTime, endTime, startDate = null, endDate = null) {
+    this.dayOfWeek = dayOfWeek; // 曜日 (0:日, 1:月, ..., 6:土)
+    this.startTime = startTime;   // 開始時間 (時)
+    this.endTime = endTime;      // 終了時間 (時)
+    this.startDate = startDate ? new Date(startDate) : null; // 開始日 (Date型)
+    this.endDate = endDate ? new Date(endDate) : null;     // 終了日 (Date型)
+  }
+
+  isApplicable(date) {
+    if (this.startDate && date < this.startDate) return false;
+    if (this.endDate && date > this.endDate) return false;
+    return date.getDay() === this.dayOfWeek;
+  }
+}
+
 // 出勤等予定設定（休日・祝日ではない日に予定がある時間帯）
 const WORK_SCHEDULES = [
-  {
-    dayOfWeek: 1, // 月曜日 (0:日, 1:月, ..., 6:土)
-    startTime: 9,   // 開始時間 (時)
-    endTime: 19    // 終了時間 (時)
-  },
-  {
-    dayOfWeek: 2, // 火曜日
-    startTime: 9,
-    endTime: 19
-  },
-  {
-    dayOfWeek: 3, // 水曜日
-    startTime: 9,
-    endTime: 19
-  },
-  {
-    dayOfWeek: 4, // 木曜日
-    startTime: 9,
-    endTime: 19
-  },
-  {
-    dayOfWeek: 5, // 金曜日
-    startTime: 9,
-    endTime: 19
-  }
-  // 必要に応じて他の設定を追加できます
+  new WorkSchedule(1, 9, 19), // 毎週月曜日 9時〜19時
+  new WorkSchedule(2, 9, 19), // 毎週火曜日 9時〜19時
+  new WorkSchedule(3, 9, 19), // 毎週水曜日 9時〜19時
+  new WorkSchedule(4, 9, 19), // 毎週木曜日 9時〜19時
+  new WorkSchedule(5, 9, 19), // 毎週金曜日 9時〜19時
 ];
 
 class DiscordNotifier {
@@ -188,16 +183,16 @@ class EventStatusAnalyzer {
     this.nighttimeEndHour = nighttimeEndHour;
     this.minGapHours = minGapHours;
     this.weekDays = weekDays;
-    this.workSchedules = workSchedules; // 出勤等予定の設定を追加
-    this.processingIntervalMinutes = processingIntervalMinutes; // イベント判定の処理単位（分）
+    this.workSchedules = workSchedules; // WorkSchedule クラスの配列
+    this.processingIntervalMinutes = processingIntervalMinutes;
   }
 
   getDayStatuses(allEvents, date, holidays) {
     const year = date.getFullYear();
     const month = date.getMonth();
     const dayOfMonth = date.getDate();
-    const dayOfWeek = date.getDay(); // 0:日, 1:月, ..., 6:土
-    const isHoliday = holidays.some(holiday => // その日が祝日かどうかを判定
+    const dayOfWeek = date.getDay();
+    const isHoliday = holidays.some(holiday =>
       holiday.getFullYear() === year &&
       holiday.getMonth() === month &&
       holiday.getDate() === dayOfMonth
@@ -213,7 +208,7 @@ class EventStatusAnalyzer {
     // その日の終日イベントを取得
     const allDayEventsOnDate = allEvents.filter(event => {
       if (!event.isAllDayEvent()) {
-        return false; // 終日イベントでない場合は除外
+        return false;
       }
       const eventStartDate = new Date(event.getStartTime().getFullYear(), event.getStartTime().getMonth(), event.getStartTime().getDate()).getTime();
       const eventEndDate = new Date(event.getEndTime().getFullYear(), event.getEndTime().getMonth(), event.getEndTime().getDate()).getTime();
@@ -229,7 +224,7 @@ class EventStatusAnalyzer {
     let isWorkScheduleInDaytime = false;
     if (!isHoliday) {
       this.workSchedules.forEach(schedule => {
-        if (schedule.dayOfWeek === dayOfWeek) {
+        if (schedule.isApplicable(date)) { // 曜日と期間を確認
           const scheduleStartTime = schedule.startTime;
           const scheduleEndTime = schedule.endTime;
           // 昼間の時間帯と重複するか確認
@@ -307,6 +302,7 @@ class EventStatusAnalyzer {
         const eventEndTime = event.getEndTime().getTime();
         return eventStartTime < intervalEnd && eventEndTime > currentTime;
       });
+
       if (hasEventInInterval) {
         return '✕';
       }
