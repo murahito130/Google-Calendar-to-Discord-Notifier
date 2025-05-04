@@ -11,10 +11,11 @@ const HOLIDAY_CALENDAR_IDS = [
 ];
 
 class WorkSchedule {
-  constructor(dayOfWeek, startTime, endTime, startDate = null, endDate = null) {
+  constructor(dayOfWeek, startTime, endTime, ignoreOnHoliday = false, startDate = null, endDate = null) {
     this.dayOfWeek = dayOfWeek; // 曜日 (0:日, 1:月, ..., 6:土)
     this.startTime = startTime;   // 開始時間 (時)
     this.endTime = endTime;     // 終了時間 (時)
+    this.ignoreOnHoliday = ignoreOnHoliday; // 祝日の場合でも適用するかどうか (true: 適用しない, false: 適用する)
     this.startDate = startDate ? new Date(startDate) : null; // 開始日 (Date型)
     this.endDate = endDate ? new Date(endDate) : null;       // 終了日 (Date型)
   }
@@ -26,15 +27,14 @@ class WorkSchedule {
   }
 }
 
-// 出勤等予定設定（休日・祝日ではない日に予定がある時間帯）
+// 出勤等予定設定（予定がある時間帯）
 const WORK_SCHEDULES = [
-  new WorkSchedule(1, 9, 19), // 例: 毎週月曜日 9時〜19時
-  new WorkSchedule(2, 9, 19), // 例: 毎週火曜日 9時〜19時
-  new WorkSchedule(3, 9, 19), // 例: 毎週水曜日 9時〜19時
-  new WorkSchedule(4, 9, 19), // 例: 毎週木曜日 9時〜19時
-  new WorkSchedule(5, 9, 19), // 例: 毎週金曜日 9時〜19時
+  new WorkSchedule(1, 9, 19), // 例: 毎週月曜日 9時〜19時 (祝日は休み)
+  new WorkSchedule(2, 9, 19), // 例: 毎週火曜日 9時〜19時 (祝日は休み)
+  new WorkSchedule(3, 9, 19), // 例: 毎週水曜日 9時〜19時 (祝日は休み)
+  new WorkSchedule(4, 9, 19), // 例: 毎週木曜日 9時〜19時 (祝日は休み)
+  new WorkSchedule(5, 9, 19), // 例: 毎週金曜日 9時〜19時 (祝日は休み)
   // 必要に応じて勤務スケジュールを追加・変更・削除できます
-  // 例: 特定期間のみの勤務 new WorkSchedule(0, 10, 17, '2025-05-10', '2025-05-15'), // 5月10日〜15日の日曜日 10時〜17時
 ];
 
 // -------------------- 通常は変更不要な項目 --------------------
@@ -231,10 +231,28 @@ class EventStatusAnalyzer {
     let isWorkScheduleInDaytime = false;
     if (!isHoliday) {
       this.workSchedules.forEach(schedule => {
-        if (schedule.isApplicable(date)) { // 曜日と期間を確認
+        if (schedule.isApplicable(date) && !schedule.ignoreOnHoliday) { // 曜日と期間を確認し、祝日を無視しない設定の場合のみ
           const scheduleStartTime = schedule.startTime;
           const scheduleEndTime = schedule.endTime;
           // 昼間の時間帯と重複するか確認
+          if ((scheduleStartTime < daytimeEndHour && scheduleEndTime > daytimeStartHour)) {
+            isWorkScheduleInDaytime = true;
+          }
+        } else if (schedule.isApplicable(date) && schedule.ignoreOnHoliday && !isHoliday) { // 祝日の場合は無視する設定
+          const scheduleStartTime = schedule.startTime;
+          const scheduleEndTime = schedule.endTime;
+          if ((scheduleStartTime < daytimeEndHour && scheduleEndTime > daytimeStartHour)) {
+            isWorkScheduleInDaytime = true;
+          }
+        }
+      });
+    } else { // isHoliday が true の場合
+      this.workSchedules.forEach(schedule => {
+        if (schedule.isApplicable(date) && schedule.ignoreOnHoliday) { // 曜日と期間を確認し、祝日を無視する設定の場合、ここでは何もしない
+          return;
+        } else if (schedule.isApplicable(date)) { // 祝日でも適用する設定の場合
+          const scheduleStartTime = schedule.startTime;
+          const scheduleEndTime = schedule.endTime;
           if ((scheduleStartTime < daytimeEndHour && scheduleEndTime > daytimeStartHour)) {
             isWorkScheduleInDaytime = true;
           }
@@ -291,7 +309,7 @@ class EventStatusAnalyzer {
     const year = date.getFullYear();
     const month = date.getMonth();
     const dayOfMonth = date.getDate();
-    const intervalMinutes = this.processingIntervalMinutes;
+const intervalMinutes = this.processingIntervalMinutes;
     const startTime = new Date(year, month, dayOfMonth, startHour, 0, 0, 0).getTime();
     let endTime;
     if (endHour > 23) {
