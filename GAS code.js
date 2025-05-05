@@ -215,7 +215,7 @@ class EventStatusAnalyzer {
     this.nighttimeEndHour = nighttimeEndHour;
     this.minGapHours = minGapHours;
     this.weekDays = weekDays;
-    this.workSchedules = workSchedules; // WorkSchedule クラスの配列
+    this.workSchedules = workSchedules;
     this.processingIntervalMinutes = processingIntervalMinutes;
   }
 
@@ -223,7 +223,6 @@ class EventStatusAnalyzer {
     const year = date.getFullYear();
     const month = date.getMonth();
     const dayOfMonth = date.getDate();
-    const dayOfWeek = date.getDay();
     const isHoliday = holidays.some(holiday =>
       holiday.getFullYear() === year &&
       holiday.getMonth() === month &&
@@ -231,17 +230,16 @@ class EventStatusAnalyzer {
     );
     const targetDateMidnight = new Date(year, month, dayOfMonth).getTime();
 
-    // その日の終日イベントを取得
+    // 終日イベントをフィルタリング
     const allDayEventsOnDate = allEvents.filter(event => {
-      if (!event.isAllDayEvent()) {
-        return false;
-      }
+      if (!event.isAllDayEvent()) return false;
       const eventStartDate = new Date(event.getStartTime().getFullYear(), event.getStartTime().getMonth(), event.getStartTime().getDate()).getTime();
       const eventEndDate = new Date(event.getEndTime().getFullYear(), event.getEndTime().getMonth(), event.getEndTime().getDate()).getTime();
       return eventEndDate > targetDateMidnight && eventStartDate <= targetDateMidnight;
     });
-    let daytimeStatus = '◯'; // 昼間の初期ステータスは空き
-    let nighttimeStatus = '◯'; // 夜間の初期ステータスは空き
+
+    let daytimeStatus = '◯'; 
+    let nighttimeStatus = '◯'; 
     let hasAllDayEvent = allDayEventsOnDate.length > 0;
     let isDaytimeBusy = false;
     let isNighttimeBusy = false;
@@ -250,14 +248,8 @@ class EventStatusAnalyzer {
       if (schedule.isApplicable(date, isHoliday)) {
         const scheduleStartTime = schedule.startTime;
         const scheduleEndTime = schedule.endTime;
-        if ((scheduleStartTime < this.daytimeEndHour && scheduleEndTime > this.daytimeStartHour)) {
-          isDaytimeBusy = true;
-        }
-        if ((scheduleStartTime < this.nighttimeEndHour && scheduleEndTime > this.nighttimeStartHour) ||
-            (scheduleStartTime < 24 && scheduleEndTime > 24 && scheduleStartTime < this.nighttimeEndHour % 24) ||
-            (scheduleStartTime < 24 && scheduleEndTime > 24 && scheduleEndTime > this.nighttimeStartHour)) {
-          isNighttimeBusy = true;
-        }
+        if (scheduleStartTime < this.daytimeEndHour && scheduleEndTime > this.daytimeStartHour) isDaytimeBusy = true;
+        if (scheduleStartTime < this.nighttimeEndHour && scheduleEndTime > this.nighttimeStartHour) isNighttimeBusy = true;
       }
     });
 
@@ -269,85 +261,43 @@ class EventStatusAnalyzer {
       nighttimeStatus = this.checkTimeRangeStatus(allEvents, date, this.nighttimeStartHour, this.nighttimeEndHour, isNighttimeBusy);
     }
 
-    return [daytimeStatus, nighttimeStatus]; // 昼と夜のステータスを配列で返す
-  }
-
-  getEventsInTimeRange(allEvents, date, startHour, endHour) {
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    const dayOfMonth = date.getDate();
-    const startTime = new Date(year, month, dayOfMonth, startHour, 0, 0, 0).getTime();
-    let endTime;
-    if (endHour > 23) {
-      const nextDay = new Date(year, month, dayOfMonth + 1, endHour % 24, 0, 0, 0);
-      endTime = nextDay.getTime();
-    } else {
-      endTime = new Date(year, month, dayOfMonth, endHour, 0, 0, 0).getTime();
-    }
-
-    return allEvents.filter(event => {
-      const eventStartTime = event.getStartTime().getTime();
-      const eventEndTime = event.getEndTime().getTime();
-      return !event.isAllDayEvent() && eventStartTime < endTime && eventEndTime > startTime;
-    });
+    return [daytimeStatus, nighttimeStatus];
   }
 
   checkTimeRangeStatus(allEvents, date, startHour, endHour, isWorkScheduleActive) {
     const events = this.getEventsInTimeRange(allEvents, date, startHour, endHour);
     const hasEventOrSchedule = isWorkScheduleActive || events.length > 0;
 
-    if (!hasEventOrSchedule) {
-      return '◯';
-    }
+    if (!hasEventOrSchedule) return '◯';
 
     const allBusyIntervals = [];
 
-    // カレンダーイベントの期間を busy interval として追加
+    // イベントの期間をbusy intervalとして追加
     events.forEach(event => {
       allBusyIntervals.push({ start: event.getStartTime().getTime(), end: event.getEndTime().getTime() });
     });
 
-    // 出勤時間を busy interval として追加
+    // 出勤時間をbusy intervalとして追加
     if (isWorkScheduleActive) {
       const targetDate = new Date(date);
       const scheduleStartTime = new Date(targetDate);
-      scheduleStartTime.setHours(this.workSchedules.find(schedule => schedule.isApplicable(targetDate, this.isHoliday(targetDate, []))).startTime, 0, 0, 0);
-
+      scheduleStartTime.setHours(this.workSchedules[0].startTime, 0, 0, 0); // 例: 最初の勤務時間を参考に設定
       const scheduleEndTime = new Date(targetDate);
-      scheduleEndTime.setHours(this.workSchedules.find(schedule => schedule.isApplicable(targetDate, this.isHoliday(targetDate, []))).endTime, 0, 0, 0);
-
-      // 翌日にまたがる勤務時間も考慮
-      if (scheduleEndTime.getHours() < scheduleStartTime.getHours()) {
-        scheduleEndTime.setDate(scheduleEndTime.getDate() + 1);
-      }
-
-      const periodStart = new Date(targetDate);
-      periodStart.setHours(startHour, 0, 0, 0);
-      const periodEnd = new Date(targetDate);
-      periodEnd.setHours(endHour > 23 ? endHour % 24 : endHour, 0, 0, 0);
-      if (endHour > 23) {
-        periodEnd.setDate(periodEnd.getDate() + 1);
-      }
-
-      // 判定対象の時間帯に出勤時間帯が一部でも含まれていれば busy interval とする
-      if (scheduleStartTime.getTime() < periodEnd.getTime() && scheduleEndTime.getTime() > periodStart.getTime()) {
+      scheduleEndTime.setHours(this.workSchedules[0].endTime, 0, 0, 0);
+      
+      if (scheduleStartTime.getTime() < scheduleEndTime.getTime()) {
         allBusyIntervals.push({ start: scheduleStartTime.getTime(), end: scheduleEndTime.getTime() });
       }
     }
 
-    if (allBusyIntervals.length === 0) {
-      return '◯';
-    }
+    if (allBusyIntervals.length === 0) return '◯';
 
     allBusyIntervals.sort((a, b) => a.start - b.start);
 
     const periodStart = new Date(date);
     periodStart.setHours(startHour, 0, 0, 0);
     const periodEnd = new Date(date);
-    periodEnd.setHours(endHour > 23 ? endHour % 24 : endHour, 0, 0, 0);
-    if (endHour > 23) {
-      periodEnd.setDate(periodEnd.getDate() + 1);
-    }
+    periodEnd.setHours(endHour, 0, 0, 0);
     let currentTime = periodStart.getTime();
     let hasLongGap = false;
 
@@ -369,17 +319,21 @@ class EventStatusAnalyzer {
     return hasLongGap ? '△' : '✕';
   }
 
-  isHoliday(date, holidays) {
+  getEventsInTimeRange(allEvents, date, startHour, endHour) {
     const year = date.getFullYear();
     const month = date.getMonth();
     const dayOfMonth = date.getDate();
-    return holidays.some(holiday =>
-      holiday.getFullYear() === year &&
-      holiday.getMonth() === month &&
-      holiday.getDate() === dayOfMonth
-    );
+    const startTime = new Date(year, month, dayOfMonth, startHour, 0, 0, 0).getTime();
+    const endTime = new Date(year, month, dayOfMonth, endHour, 0, 0, 0).getTime();
+
+    return allEvents.filter(event => {
+      const eventStartTime = event.getStartTime().getTime();
+      const eventEndTime = event.getEndTime().getTime();
+      return !event.isAllDayEvent() && eventStartTime < endTime && eventEndTime > startTime;
+    });
   }
 }
+
 
 /**
  * Googleカレンダーのイベント情報を取得し、指定されたDiscordのWebhook URLへ送信します。
