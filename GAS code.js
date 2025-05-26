@@ -179,6 +179,10 @@ class CalendarHelper {
     return this.holidayCalendars[calendarId];
   }
 
+  /**
+   * 指定された期間内のイベントを取得し、透明度が「OPAQUE」（予定あり）のイベントのみを返します。
+   * 「TRANSPARENT」（予定なし）のイベントは除外されます。
+   */
   getEventsForRange(startTime, endTime) {
     let publicBusyEvents = [];
     this.calendarIds.forEach(calendarId => {
@@ -186,11 +190,14 @@ class CalendarHelper {
       if (calendar) {
         const events = calendar.getEvents(startTime, endTime);
         events.forEach(event => {
-          publicBusyEvents.push(event);
+          // イベントの透明度が OPAQUE (予定あり) の場合のみ追加
+          if (event.getTransparency() === CalendarApp.EventTransparency.OPAQUE) {
+            publicBusyEvents.push(event);
+          }
         });
       }
     });
-    return publicBusyEvents; // 公開設定が「予定あり」のイベントのみを返す
+    return publicBusyEvents;
   }
 
   getHolidayDates(startDate, endDate) {
@@ -238,8 +245,8 @@ class EventStatusAnalyzer {
       return eventEndDate > targetDateMidnight && eventStartDate <= targetDateMidnight;
     });
 
-    let daytimeStatus = '◯'; 
-    let nighttimeStatus = '◯'; 
+    let daytimeStatus = '◯';
+    let nighttimeStatus = '◯';
     let hasAllDayEvent = allDayEventsOnDate.length > 0;
     let isDaytimeBusy = false;
     let isNighttimeBusy = false;
@@ -380,7 +387,7 @@ function sendCalendarEventsToDiscord() {
     const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
     let monthText = '```\n';
 
-    monthText += '   　 　昼 夜\n';
+    monthText += '      昼 夜\n';
 
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(targetYear, targetMonth, day);
